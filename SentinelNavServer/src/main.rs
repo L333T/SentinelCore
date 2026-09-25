@@ -53,8 +53,10 @@ async fn main() -> anyhow::Result<()> {
         env!("CARGO_PKG_VERSION")
     );
 
-    // Load configuration
-    let config = Config::load()?;
+    // Load configuration. Honor `--config <path>` (or `--config=<path>`) so a launcher can point at
+    // an absolute config regardless of the working directory; otherwise fall back to the env var /
+    // ./config.toml (see Config::load).
+    let config = Config::load(config_path_from_args())?;
     tracing::info!(
         "Configuration loaded: host={}, port={}, default_game={}",
         config.server.host,
@@ -176,6 +178,20 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Server shutdown complete");
     Ok(())
+}
+
+/// Parse an optional `--config <path>` / `--config=<path>` argument.
+fn config_path_from_args() -> Option<std::path::PathBuf> {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if let Some(rest) = arg.strip_prefix("--config=") {
+            return Some(std::path::PathBuf::from(rest));
+        }
+        if arg == "--config" {
+            return args.next().map(std::path::PathBuf::from);
+        }
+    }
+    None
 }
 
 /// Create a cancellation token that fires on Ctrl+C or SIGTERM.

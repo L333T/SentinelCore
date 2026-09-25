@@ -174,11 +174,14 @@ impl Default for PathfindingConfig {
 }
 
 impl Config {
-    /// Load configuration from file or defaults.
-    pub fn load() -> anyhow::Result<Self> {
-        // Try to load from config.toml
-        let config_path = std::env::var("SENTINEL_NAV_SERVER_CONFIG")
-            .unwrap_or_else(|_| "config.toml".to_string());
+    /// Load configuration from an explicit path, the `SENTINEL_NAV_SERVER_CONFIG` env var, or the
+    /// default `config.toml` in the current directory — in that precedence order. Falls back to
+    /// built-in defaults only when none of those files exist.
+    pub fn load(explicit_path: Option<PathBuf>) -> anyhow::Result<Self> {
+        let config_path = explicit_path
+            .map(|p| p.to_string_lossy().into_owned())
+            .or_else(|| std::env::var("SENTINEL_NAV_SERVER_CONFIG").ok())
+            .unwrap_or_else(|| "config.toml".to_string());
 
         if let Ok(content) = std::fs::read_to_string(&config_path) {
             let config: Config = toml::from_str(&content)?;
