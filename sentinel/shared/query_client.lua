@@ -43,10 +43,29 @@ end
 -- instead of re-requesting every tick.
 local NOT_FOUND = "__not_found__"
 
+-- The historical default endpoint. A HOSTED deployment overrides it by shipping a
+-- `sentinel/config/query_server.lua` returning `{ host = ..., port = ... }` (mirrors
+-- SentinelNavClient/config/server.lua for NavServer); the thin-client installer writes that file.
+-- When the config is absent or malformed we fall back to a local QueryServer, so the offline
+-- suite and a default dev box behave exactly as before. Explicit `:new(host, port)` args (used by
+-- the editor client at :3031 and by tests) always win over the config.
+local DEFAULT_HOST, DEFAULT_PORT = "127.0.0.1", 3030
+
+local function config_endpoint()
+    local ok, cfg = pcall(require, "config/query_server")
+    if ok and type(cfg) == "table" then
+        local host = (type(cfg.host) == "string" and cfg.host ~= "") and cfg.host or nil
+        local port = tonumber(cfg.port)
+        return host or DEFAULT_HOST, port or DEFAULT_PORT
+    end
+    return DEFAULT_HOST, DEFAULT_PORT
+end
+
 function QueryClient:new(host, port)
     local o = setmetatable({}, QueryClient)
-    o._host = host or "127.0.0.1"
-    o._port = port or 3030
+    local cfg_host, cfg_port = config_endpoint()
+    o._host = host or cfg_host
+    o._port = port or cfg_port
     o._cache = {}
     o._inflight = {}
     return o

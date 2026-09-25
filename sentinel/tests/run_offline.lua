@@ -592,6 +592,11 @@ local test_modules = {
     "tests/shared/test_humanization",
     "tests/shared/test_class_names",
     "tests/shared/test_aoe_helper",
+    -- The QueryServer endpoint is installer-configurable (hosted vs local); this pins that the
+    -- runtime's QueryClient reads sentinel/config/query_server.lua, that explicit args still win
+    -- (EditorClient depends on that to pin :3031), and that a bad/absent config degrades to the
+    -- historical 127.0.0.1:3030 rather than breaking a default dev box.
+    "tests/shared/test_query_client_config",
 
     -- Integration
     "tests/integration/test_combat_dummy",

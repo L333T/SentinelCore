@@ -1,0 +1,147 @@
+name: release
+
+# Build and publish both SentinelCore distributions when a version tag is pushed:
+#   * thin-client  (Lua plugins + compiled profiles; remote NavServer/QueryServer)
+#   * standalone   (the above + a Windows-native NavServer.exe)
+#
+# Trigger: push a tag like `v1.2.3`, or run manually via workflow_dispatch.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version stamp for the artifacts (e.g. v1.2.3)'
+        required: true
+        default: 'v0.0.0-manual'
+      guides_dir:
+        description: 'Guides directory to precompile (narrow it to keep CI fast)'
+        required: false
+        default: 'sentinel/docs/adr/restedxp guides'
+
+permissions:
+  contents: write   # create the GitHub Release and upload assets
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1) Build the Windows-native NavServer.exe (Rust + vendored Recast/Detour C++).
+  # ---------------------------------------------------------------------------
+  navserver-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # recastnavigation, if wired as a submodule
+
+      - name: Install LLVM/Clang (bindgen needs libclang)
+        run: choco install llvm --yes --no-progress
+        shell: pwsh
+
+      - name: Point bindgen at libclang
+        run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
+        shell: pwsh
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build NavServer (release)
+        working-directory: SentinelNavServer
+        run: cargo build --release
+
+      - name: Stage NavServer.exe
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path staged | Out-Null
+          Copy-Item SentinelNavServer/target/release/sentinel-nav-server.exe staged/NavServer.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: navserver-windows
+          path: staged/NavServer.exe
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # 2) Precompile the shipped Runtime Profiles (Linux).
+  #    Supply a real world DB via the SENTINEL_DB secret to resolve references;
+  #    otherwise a throwaway empty DB is used and profiles are structural.
+  # ---------------------------------------------------------------------------
+  profiles:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install runtime deps
+        run: sudo apt-get update && sudo apt-get install -y sqlite3 luajit
+
+      - name: Precompile profiles
+        run: |
+          GUIDES="${{ github.event.inputs.guides_dir || 'sentinel/docs/adr/restedxp guides' }}"
+          scripts/precompile-profiles.sh --out-dir "$GITHUB_WORKSPACE/profiles" --guides-dir "$GUIDES"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: profiles
+          path: profiles/*.json
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # 3) Assemble both zips and publish the GitHub Release.
+  # ---------------------------------------------------------------------------
+  release:
+    needs: [navserver-windows, profiles]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install zip
+        run: sudo apt-get update && sudo apt-get install -y zip
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: navserver-windows
+          path: navbin
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: profiles
+          path: profiles
+
+      - name: Resolve version
+        id: ver
+        run: echo "version=${{ github.event.inputs.version || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build thin-client zip
+        run: |
+          scripts/package-release.sh \
+            --version "${{ steps.ver.outputs.version }}" \
+            --output-dir dist \
+            --profiles-dir profiles
+
+      - name: Build standalone zip (bundles NavServer.exe)
+        run: |
+          scripts/package-release.sh \
+            --version "${{ steps.ver.outputs.version }}" \
+            --output-dir dist \
+            --profiles-dir profiles \
+            --nav-binary navbin/NavServer.exe \
+            --nav-binary-name NavServer.exe
+
+      - name: List artifacts
+        run: ls -la dist
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "SentinelCore ${{ steps.ver.outputs.version }}"
+          tag_name: ${{ github.ref_name }}
+          draft: true
+          files: dist/*.zip
+          body: |
+            SentinelCore ${{ steps.ver.outputs.version }} — thin-client and standalone distributions.
+
+            - `SentinelCore-thin-*.zip` — Lua plugins + compiled profiles; points at a hosted NavServer/QueryServer.
+            - `SentinelCore-standalone-*.zip` — the above plus a Windows-native `NavServer.exe` (add a local `mmaps` navmesh).
+
+            Install: unzip, then run `install.ps1` (Windows) or `install.sh` (WSL/Linux). See each package's README.

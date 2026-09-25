@@ -120,11 +120,43 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", out_dir.display());
     println!("cargo:rustc-link-lib=static=detour");
 
-    // Link C++ standard library
-    if cfg!(target_os = "linux") {
-        println!("cargo:rustc-link-lib=stdc++");
-    } else if cfg!(target_os = "macos") {
-        println!("cargo:rustc-link-lib=c++");
+    // Link the C++ standard library. In a build script `cfg!(target_os = ...)` reflects the HOST,
+    // not the build target, so cross-compiles must consult the target env vars cargo provides.
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    match (target_os.as_str(), target_env.as_str()) {
+        ("linux", _) => println!("cargo:rustc-link-lib=stdc++"),
+        ("macos", _) => println!("cargo:rustc-link-lib=c++"),
+        // MinGW (windows-gnu), native or cross. Prefer a STATIC libstdc++ so the produced .exe is
+        // self-contained (no libstdc++-6.dll alongside it); pair with `-C link-arg=-static` to make
+        // libgcc/winpthread static too. The static archive's directory is discovered from the C++
+        // compiler itself (no hardcoded path), and we fall back to dynamic linking if it can't be
+        // found, so this never breaks a windows-gnu build. MSVC links its C++ runtime automatically.
+        ("windows", "gnu") => match mingw_static_libstdcxx_dir() {
+            Some(dir) => {
+                println!("cargo:rustc-link-search=native={}", dir.display());
+                println!("cargo:rustc-link-lib=static=stdc++");
+            }
+            None => println!("cargo:rustc-link-lib=stdc++"),
+        },
+        _ => {}
     }
-    // Windows links automatically via MSVC
+}
+
+/// Ask the target C++ compiler where its static `libstdc++.a` lives, returning the containing
+/// directory when it resolves to a real absolute path. Uses `CXX_x86_64_pc_windows_gnu` when set
+/// (as cargo/cc do for cross builds), else the conventional mingw g++ name.
+fn mingw_static_libstdcxx_dir() -> Option<PathBuf> {
+    let cxx = env::var("CXX_x86_64_pc_windows_gnu")
+        .unwrap_or_else(|_| "x86_64-w64-mingw32-g++".to_string());
+    let output = std::process::Command::new(&cxx)
+        .arg("-print-file-name=libstdc++.a")
+        .output()
+        .ok()?;
+    let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    if path.is_absolute() && path.exists() {
+        path.parent().map(|p| p.to_path_buf())
+    } else {
+        None
+    }
 }
