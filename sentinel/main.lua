@@ -277,8 +277,10 @@ local IdePanels = require("ui/ide_panels")
 --
 -- Constructing it costs nothing and touches no SDK surface: `QueryClient:new` only fills a table.
 -- The first `core.http_get` happens on the first fetch, from a tick callback, never from render.
+-- No explicit host/port: `QueryClient:new()` reads sentinel/config/query_server.lua, so a hosted
+-- deployment (installer-written config) and a local dev box are both honoured without editing code.
 local QueryClient = require("shared/query_client")
-local _ide_query_client = QueryClient:new("127.0.0.1", 3030)
+local _ide_query_client = QueryClient:new()
 
 -- And ONE EditorClient for the campaign editor at :3031. PR1 deliberately left this line out
 -- rather than pass a `deps.editor_client` that resolved to nil, because a nil-valued dependency is

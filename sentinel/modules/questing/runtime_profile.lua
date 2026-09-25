@@ -102,7 +102,9 @@ function RuntimeProfile:new(json_path, dry_run, event_bus, blackboard)
     o._dry_run = dry_run == true
     o._profile = nil
     o._blackboard = blackboard or Blackboard:new()
-    o._query = QueryClient:new("127.0.0.1", 3030)
+    -- No explicit host/port: reads sentinel/config/query_server.lua so a hosted QueryServer works
+    -- without a code change (falls back to 127.0.0.1:3030 when the config is absent).
+    o._query = QueryClient:new()
     o._current_operation_idx = 1
     o._current_op_id = nil              -- Tracks identity for retry reset
     o._variables = {}
