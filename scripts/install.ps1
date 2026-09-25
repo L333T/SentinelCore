@@ -24,6 +24,8 @@ param(
     [string]$QueryServerHost,
     [int]$QueryServerPort = 0,
     [switch]$NoDebugPlugin,
+    [switch]$InstallNavServer,
+    [string]$NavServerDir,
     [switch]$SkipHealthCheck,
     [switch]$DryRun
 )
@@ -168,6 +170,24 @@ if ($profiles.Count -gt 0) {
     }
 } else {
     Info "No compiled profiles in package (profiles/ empty) - skipping"
+}
+
+# --- 4b) Standalone: deploy the bundled NavServer ----------------------------------------------
+$navSrc = Join-Path $PkgDir 'navserver'
+if (Test-Path $navSrc) {
+    if ($InstallNavServer) {
+        if (-not $NavServerDir) { $NavServerDir = Join-Path (Split-Path -Parent $ScriptsDir) 'SentinelNavServer' }
+        Info "Installing bundled NavServer -> $NavServerDir"
+        Do-Action "deploy navserver" {
+            if (-not (Test-Path $NavServerDir)) { New-Item -ItemType Directory -Force -Path $NavServerDir | Out-Null }
+            Copy-Item -Recurse -Force (Join-Path $navSrc '*') $NavServerDir
+        }
+        Info "NavServer installed. Start it with: $NavServerDir\start-navserver.ps1"
+        Info "Add a 'mmaps' navmesh folder under $NavServerDir before pathfinding will work (see navserver/README.txt)."
+    } else {
+        Info "This package bundles a NavServer (navserver/). Re-run with -InstallNavServer to deploy it,"
+        Info "or point -NavServerUrl at an already-running one."
+    }
 }
 
 # --- 5) Health-check the servers ---------------------------------------------------------------

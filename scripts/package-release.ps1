@@ -21,6 +21,8 @@ param(
     [string]$NavUrl = 'http://127.0.0.1:47110',
     [string]$QueryHost = '127.0.0.1',
     [int]$QueryPort = 3030,
+    [string]$NavBinary,
+    [string]$NavBinaryName = 'NavServer.exe',
     [switch]$NoDebugPlugin,
     [switch]$KeepStaging
 )
@@ -46,7 +48,15 @@ if (-not $OutputDir) { $OutputDir = Join-Path $RepoRoot 'dist' }
 if (-not (Test-Path (Join-Path $RepoRoot 'sentinel'))) { Die "sentinel/ not found under repo root $RepoRoot" }
 if (-not (Test-Path (Join-Path $RepoRoot 'SentinelNavClient'))) { Die "SentinelNavClient/ not found under repo root $RepoRoot" }
 
-$PkgName = "SentinelCore-thin-$Version"
+# A NavServer binary switches the package from thin-client (remote services) to standalone.
+if ($NavBinary) {
+    if (-not (Test-Path $NavBinary)) { Die "-NavBinary '$NavBinary' does not exist" }
+    $Kind = 'standalone'
+} else {
+    $Kind = 'thin'
+}
+
+$PkgName = "SentinelCore-$Kind-$Version"
 $StagingParent = Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName())
 $Staging = Join-Path $StagingParent $PkgName
 New-Item -ItemType Directory -Force -Path (Join-Path $Staging 'plugins') | Out-Null
@@ -90,15 +100,57 @@ The installer copies every *.json in this folder into the Sylvannas scripts_data
     Set-Content -Path (Join-Path $Staging 'profiles/README.txt') -Value $stub -Encoding UTF8
 }
 
+# --- Standalone only: bundle the NavServer binary + config + launchers -------------------------
+if ($Kind -eq 'standalone') {
+    Info "Bundling standalone NavServer: $NavBinary -> navserver/$NavBinaryName"
+    $navStage = Join-Path $Staging 'navserver'
+    New-Item -ItemType Directory -Force -Path $navStage | Out-Null
+    Copy-Item -Force $NavBinary (Join-Path $navStage $NavBinaryName)
+    $navConfig = Join-Path $RepoRoot 'SentinelNavServer/config.toml'
+    if (Test-Path $navConfig) { Copy-Item -Force $navConfig (Join-Path $navStage 'config.toml') }
+    $startPs = @'
+# Starts the bundled SentinelNavServer. Run this before playing (or let install.ps1 register it).
+$dir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$exe = Join-Path $dir 'NavServer.exe'
+if (-not (Test-Path $exe)) { Write-Error "NavServer.exe not found next to this script"; exit 1 }
+if (-not (Test-Path (Join-Path $dir 'mmaps'))) {
+    Write-Warning "No 'mmaps' folder next to NavServer.exe - pathfinding will return MAP_NOT_FOUND until you add the navmesh (see README.txt)."
+}
+& $exe --config (Join-Path $dir 'config.toml')
+'@
+    Set-Content -Path (Join-Path $navStage 'start-navserver.ps1') -Value $startPs -Encoding UTF8
+    $navReadme = @"
+SentinelNavServer (self-hosted) - listens on 0.0.0.0:47110 (see config.toml).
+
+REQUIRED DATA (not bundled - it is ~4 GB and specific to your client):
+  Place the CMaNGOS navmesh in a 'mmaps' folder NEXT TO $NavBinaryName
+  (config.toml sets mmap_path = "./mmaps"). Generate it with CMaNGOS MoveMapGen.
+  Without it the server still starts and /health returns 200, but pathfinding
+  returns 404 MAP_NOT_FOUND.
+
+Start it:  ./start-navserver.ps1   (Windows)
+"@
+    Set-Content -Path (Join-Path $navStage 'README.txt') -Value $navReadme -Encoding UTF8
+}
+
 Copy-Item -Force (Join-Path $ScriptDir 'install.ps1') (Join-Path $Staging 'install.ps1')
 Copy-Item -Force (Join-Path $ScriptDir 'install.sh') (Join-Path $Staging 'install.sh')
 
 $pluginNames = (Get-ChildItem -Path (Join-Path $Staging 'plugins') -Directory | ForEach-Object { '"' + $_.Name + '"' }) -join ','
 $created = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+if ($Kind -eq 'standalone') {
+    $kindLabel = 'standalone'
+    $navJson = "{ ""bundled"": true, ""binary"": ""$NavBinaryName"", ""needs_mmaps"": true }"
+    $notes = 'Self-hosted: bundles NavServer (needs a local mmaps navmesh) plus the Lua payload and profiles. The installer deploys NavServer and points the plugins at 127.0.0.1.'
+} else {
+    $kindLabel = 'thin-client'
+    $navJson = '{ "bundled": false }'
+    $notes = 'Play-time payload only. NavServer (required) and QueryServer (optional) are provided by a host; the installer points the plugins at them.'
+}
 $manifest = @"
 {
   "package": "$PkgName",
-  "kind": "thin-client",
+  "kind": "$kindLabel",
   "version": "$Version",
   "created": "$created",
   "defaults": {
@@ -106,13 +158,36 @@ $manifest = @"
     "query_server_host": "$QueryHost",
     "query_server_port": $QueryPort
   },
+  "navserver": $navJson,
   "plugins": [$pluginNames],
   "profile_count": $profileCount,
-  "notes": "Play-time payload only. NavServer (required) and QueryServer (optional) are provided by a host; the installer points the plugins at them."
+  "notes": "$notes"
 }
 "@
 Set-Content -Path (Join-Path $Staging 'MANIFEST.json') -Value $manifest -Encoding UTF8
 
+if ($Kind -eq 'standalone') {
+$readme = @"
+# SentinelCore standalone ($Version)
+
+Self-hosted, offline-capable payload: Lua plugins, compiled Runtime Profiles, AND a bundled
+SentinelNavServer ($NavBinaryName). Add a local ``mmaps`` navmesh next to the binary
+(see ``navserver/README.txt``); no remote services required.
+
+## Install (Windows)
+``````powershell
+./install.ps1 -InstallNavServer
+``````
+
+## Install (WSL / Linux shell)
+``````bash
+./install.sh --install-navserver
+``````
+
+The installer deploys the plugins + NavServer, writes localhost config, copies profiles, and
+health-checks. Start the NavServer (``navserver/start-navserver.ps1``) and reload the loader UI.
+"@
+} else {
 $readme = @"
 # SentinelCore thin client ($Version)
 
@@ -133,6 +208,7 @@ The installer auto-detects the Sylvannas ``scripts/`` folder, copies the plugins
 authoring-only ``editor_ui.lua``, writes the NavServer/QueryServer config, copies profiles into
 ``scripts_data/``, and health-checks the servers. Reload the Sylvannas loader UI afterward.
 "@
+}
 Set-Content -Path (Join-Path $Staging 'README.md') -Value $readme -Encoding UTF8
 
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null

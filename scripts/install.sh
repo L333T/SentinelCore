@@ -19,6 +19,8 @@
 #     --query-host <host>        QueryServer host (default: MANIFEST default / 127.0.0.1)
 #     --query-port <port>        QueryServer port (default: MANIFEST default / 3030)
 #     --no-debug-plugin          Do not install the lx-debug plugin even if present
+#     --install-navserver        (standalone pkg) deploy the bundled NavServer + start script
+#     --navserver-dir <dir>      Where to install the bundled NavServer (default: sibling of scripts/)
 #     --skip-health-check        Do not probe NavServer/QueryServer /health
 #     --dry-run                  Print what would happen; change nothing
 #     -h | --help                Show this help
@@ -34,6 +36,8 @@ QUERY_PORT=""
 INCLUDE_DEBUG=1
 SKIP_HEALTH=0
 DRY_RUN=0
+INSTALL_NAV=0            # standalone: deploy the bundled navserver/ payload
+NAV_DIR=""               # where to install the bundled NavServer (default: sibling of scripts/)
 
 die() { echo "error: $*" >&2; exit 1; }
 info() { echo "[install] $*"; }
@@ -48,8 +52,10 @@ while [[ $# -gt 0 ]]; do
     --query-port) QUERY_PORT="$2"; shift 2;;
     --no-debug-plugin) INCLUDE_DEBUG=0; shift;;
     --skip-health-check) SKIP_HEALTH=1; shift;;
+    --install-navserver) INSTALL_NAV=1; shift;;
+    --navserver-dir) NAV_DIR="$2"; shift 2;;
     --dry-run) DRY_RUN=1; shift;;
-    -h|--help) sed -n '2,27p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0;;
+    -h|--help) sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0;;
     *) die "unknown option: $1";;
   esac
 done
@@ -60,9 +66,12 @@ done
 manifest_get() {
   local key="$1"
   [[ -f "$PKG_DIR/MANIFEST.json" ]] || return 0
-  # Minimal JSON scrape (no jq dependency): grab "key": "value" or "key": number.
-  grep -oE "\"$key\"[[:space:]]*:[[:space:]]*\"?[^\",}]*\"?" "$PKG_DIR/MANIFEST.json" \
-    | head -1 | sed -E "s/.*:[[:space:]]*\"?([^\"]*)\"?/\1/"
+  # Minimal JSON scrape (no jq dependency): grab "key": "value" or "key": number, then strip the
+  # "key": prefix and any surrounding quotes. Matching the value shape explicitly avoids a greedy
+  # ".*:" eating the colons inside a URL value (e.g. http://host:47110).
+  grep -oE "\"$key\"[[:space:]]*:[[:space:]]*(\"[^\"]*\"|[0-9]+)" "$PKG_DIR/MANIFEST.json" \
+    | head -1 \
+    | sed -E "s/^\"$key\"[[:space:]]*:[[:space:]]*//; s/^\"//; s/\"$//"
 }
 [[ -z "$NAV_URL" ]] && NAV_URL="$(manifest_get nav_server_url)"; [[ -z "$NAV_URL" ]] && NAV_URL="http://127.0.0.1:47110"
 [[ -z "$QUERY_HOST" ]] && QUERY_HOST="$(manifest_get query_server_host)"; [[ -z "$QUERY_HOST" ]] && QUERY_HOST="127.0.0.1"
@@ -172,6 +181,22 @@ if [[ "${#PROFILES[@]}" -gt 0 ]]; then
   done
 else
   info "No compiled profiles in package (profiles/ empty) — skipping"
+fi
+
+# --- 4b) Standalone: deploy the bundled NavServer ----------------------------------------------
+if [[ -d "$PKG_DIR/navserver" ]]; then
+  if [[ "$INSTALL_NAV" -eq 1 ]]; then
+    [[ -n "$NAV_DIR" ]] || NAV_DIR="$(dirname "$SCRIPTS_DIR")/SentinelNavServer"
+    info "Installing bundled NavServer → $NAV_DIR"
+    run "mkdir -p \"$NAV_DIR\""
+    run "cp -r \"$PKG_DIR/navserver/.\" \"$NAV_DIR/\""
+    run "chmod +x \"$NAV_DIR\"/start-navserver.sh \"$NAV_DIR\"/*.exe 2>/dev/null || true"
+    info "NavServer installed. Start it with: $NAV_DIR/start-navserver.sh  (or start-navserver.ps1 on Windows)"
+    info "Add a 'mmaps' navmesh folder under $NAV_DIR before pathfinding will work (see navserver/README.txt)."
+  else
+    info "This package bundles a NavServer (navserver/). Re-run with --install-navserver to deploy it,"
+    info "or point --nav-url at an already-running one."
+  fi
 fi
 
 # --- 5) Health-check the servers ---------------------------------------------------------------
