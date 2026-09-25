@@ -17,6 +17,7 @@
 param(
     [string]$DestRoot = 'C:\Users\ebene\OneDrive\Desktop\MF_Navigation',
     [string]$NavExe,
+    [string]$Mmaps,
     [string]$ExeSubfolder = 'navserver',
     [switch]$Clean
 )
@@ -39,8 +40,16 @@ if (-not $NavExe) {
     )) { if (Test-Path $c) { $NavExe = $c; break } }
 }
 
+# Auto-detect a navmesh directory if one wasn't supplied (the usual generated location).
+if (-not $Mmaps) {
+    foreach ($c in @((Join-Path $RepoRoot 'SentinelNavServer/mmaps'), (Join-Path $RepoRoot 'mmaps'))) {
+        if ((Test-Path $c) -and (Get-ChildItem -Path $c -Filter '*.mmtile' -ErrorAction SilentlyContinue | Select-Object -First 1)) { $Mmaps = $c; break }
+    }
+}
+
 Info "Destination : $DestRoot"
 Info "NavServer.exe: $(if ($NavExe) { $NavExe } else { '<none found - build with: cargo build --release in SentinelNavServer>' })"
+Info "mmaps navmesh: $(if ($Mmaps) { $Mmaps } else { '<none found - pathfinding disabled until you add it>' })"
 
 if ($Clean -and (Test-Path $DestRoot)) { Info "Cleaning $DestRoot"; Remove-Item -Recurse -Force $DestRoot }
 New-Item -ItemType Directory -Force -Path $DestRoot | Out-Null
@@ -70,6 +79,22 @@ NavServer.exe was not bundled. Build it:
 $navConfig = Join-Path $RepoRoot 'SentinelNavServer/config.toml'
 if (Test-Path $navConfig) { Copy-Item -Force $navConfig (Join-Path $exeDir 'config.toml') }
 
+# Bundle the navmesh (config.toml's mmap_path = "./mmaps" resolves to <exe-subfolder>\mmaps).
+$mmapsDst = Join-Path $exeDir 'mmaps'
+New-Item -ItemType Directory -Force -Path $mmapsDst | Out-Null
+if ($Mmaps -and (Test-Path $Mmaps)) {
+    Info "Bundling navmesh -> $mmapsDst  (this can be several GB)"
+    Copy-Item -Recurse -Force (Join-Path $Mmaps '*') $mmapsDst
+} else {
+    @"
+Put your CMaNGOS navmesh (*.mmap + *.mmtile) in THIS folder.
+
+config.toml sets mmap_path = "./mmaps", so NavServer.exe loads tiles from here. Generate the
+navmesh with CMaNGOS MoveMapGen (see SentinelNavServer/CLAUDE.md) - it is ~4 GB and specific to
+your extracted TBC client, so it is not shipped. Re-run with -Mmaps <dir> (or drop the files here).
+"@ | Set-Content -Path (Join-Path $mmapsDst 'PUT_NAVMESH_HERE.txt') -Encoding UTF8
+}
+
 @'
 $dir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $exe = Join-Path $dir 'NavServer.exe'
@@ -80,15 +105,21 @@ if (-not (Test-Path (Join-Path $dir 'mmaps'))) {
 & $exe --config (Join-Path $dir 'config.toml')
 '@ | Set-Content -Path (Join-Path $exeDir 'start-navserver.ps1') -Encoding UTF8
 
+$mmapsNote = if ($Mmaps -and (Test-Path $Mmaps)) {
+    'NAVMESH: bundled in .\mmaps (loaded automatically).'
+} else {
+@'
+NAVMESH (~4 GB, client-specific, not shipped): put *.mmap/*.mmtile in .\mmaps.
+  Without it the server starts and /health returns 200, but pathfinding returns 404 MAP_NOT_FOUND.
+  Generate it with CMaNGOS MoveMapGen (see SentinelNavServer/CLAUDE.md).
+'@
+}
 @"
 SentinelNavServer (self-contained NavServer.exe) - listens on 0.0.0.0:47110 (config.toml).
 
-REQUIRED DATA (not bundled - ~4 GB, specific to your client):
-  Put the CMaNGOS navmesh in a 'mmaps' folder NEXT TO NavServer.exe (config.toml sets
-  mmap_path = "./mmaps"). Without it the server starts and /health returns 200, but pathfinding
-  returns 404 MAP_NOT_FOUND. Generate it with CMaNGOS MoveMapGen.
+$mmapsNote
 
-Start it:  ./start-navserver.ps1
+Start it:  .\start-navserver.ps1
 "@ | Set-Content -Path (Join-Path $exeDir 'README.txt') -Encoding UTF8
 
 Write-Host ''

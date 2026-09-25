@@ -23,6 +23,7 @@ DEST_ROOT="/mnt/c/Users/ebene/OneDrive/Desktop/MF_Navigation"
 VERSION=""
 NAV_BINARY=""
 NAV_BINARY_NAME="NavServer.exe"
+MMAPS_DIR=""
 PROFILES_DIR=""
 GUIDES_DIR=""
 DB_PATH=""
@@ -39,6 +40,7 @@ while [[ $# -gt 0 ]]; do
     --version) VERSION="$2"; shift 2;;
     --nav-binary) NAV_BINARY="$2"; shift 2;;
     --nav-binary-name) NAV_BINARY_NAME="$2"; shift 2;;
+    --mmaps) MMAPS_DIR="$2"; shift 2;;
     --profiles-dir) PROFILES_DIR="$2"; shift 2;;
     --guides-dir) GUIDES_DIR="$2"; shift 2;;
     --db) DB_PATH="$2"; shift 2;;
@@ -91,7 +93,8 @@ build_one thin
 # 2) Standalone (bundles NavServer) — only when a binary is provided
 if [[ -n "$NAV_BINARY" ]]; then
   [[ -f "$NAV_BINARY" ]] || die "--nav-binary '$NAV_BINARY' not found"
-  build_one standalone --nav-binary "$NAV_BINARY" --nav-binary-name "$NAV_BINARY_NAME"
+  mmaps_arg=(); [[ -n "$MMAPS_DIR" ]] && mmaps_arg=(--mmaps "$MMAPS_DIR")
+  build_one standalone --nav-binary "$NAV_BINARY" --nav-binary-name "$NAV_BINARY_NAME" "${mmaps_arg[@]}"
 else
   info "No --nav-binary given; skipping the standalone distribution (thin-client only)."
   info "On Windows/CI pass --nav-binary path\\to\\NavServer.exe to also build standalone/."

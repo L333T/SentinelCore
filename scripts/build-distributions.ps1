@@ -19,6 +19,7 @@ param(
     [string]$Version,
     [string]$NavBinary,
     [string]$NavBinaryName = 'NavServer.exe',
+    [string]$Mmaps,
     [string]$ProfilesDir,
     [string]$NavUrl = 'http://127.0.0.1:47110',
     [string]$QueryHost = '127.0.0.1',
@@ -74,7 +75,9 @@ Build-One 'thin' @()
 # 2) Standalone (only when a NavServer binary is provided)
 if ($NavBinary) {
     if (-not (Test-Path $NavBinary)) { Die "-NavBinary '$NavBinary' not found" }
-    Build-One 'standalone' @('-NavBinary', $NavBinary, '-NavBinaryName', $NavBinaryName)
+    $extra = @('-NavBinary', $NavBinary, '-NavBinaryName', $NavBinaryName)
+    if ($Mmaps) { $extra += @('-Mmaps', $Mmaps) }
+    Build-One 'standalone' $extra
 } else {
     Info "No -NavBinary given; skipping standalone. Pass -NavBinary path\to\NavServer.exe to build it."
 }

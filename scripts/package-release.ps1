@@ -23,6 +23,7 @@ param(
     [int]$QueryPort = 3030,
     [string]$NavBinary,
     [string]$NavBinaryName = 'NavServer.exe',
+    [string]$Mmaps,
     [switch]$NoDebugPlugin,
     [switch]$KeepStaging
 )
@@ -119,17 +120,21 @@ if (-not (Test-Path (Join-Path $dir 'mmaps'))) {
 & $exe --config (Join-Path $dir 'config.toml')
 '@
     Set-Content -Path (Join-Path $navStage 'start-navserver.ps1') -Value $startPs -Encoding UTF8
-    $navReadme = @"
-SentinelNavServer (self-hosted) - listens on 0.0.0.0:47110 (see config.toml).
-
-REQUIRED DATA (not bundled - it is ~4 GB and specific to your client):
-  Place the CMaNGOS navmesh in a 'mmaps' folder NEXT TO $NavBinaryName
-  (config.toml sets mmap_path = "./mmaps"). Generate it with CMaNGOS MoveMapGen.
-  Without it the server still starts and /health returns 200, but pathfinding
-  returns 404 MAP_NOT_FOUND.
-
-Start it:  ./start-navserver.ps1   (Windows)
-"@
+    # Bundle the navmesh if supplied (config.toml mmap_path = "./mmaps" -> navserver\mmaps).
+    $script:MmapsBundled = $false
+    if ($Mmaps) {
+        if (-not (Test-Path $Mmaps)) { Die "-Mmaps '$Mmaps' does not exist" }
+        Info "Bundling navmesh -> navserver\mmaps (this can be several GB)"
+        $mmapsStage = Join-Path $navStage 'mmaps'
+        New-Item -ItemType Directory -Force -Path $mmapsStage | Out-Null
+        Copy-Item -Recurse -Force (Join-Path $Mmaps '*') $mmapsStage
+        $script:MmapsBundled = $true
+    }
+    $navReadme = if ($script:MmapsBundled) {
+        "SentinelNavServer (self-hosted) - listens on 0.0.0.0:47110 (see config.toml).`n`nNAVMESH: bundled in .\mmaps (loaded automatically).`n`nStart it:  ./start-navserver.ps1   (Windows)"
+    } else {
+        "SentinelNavServer (self-hosted) - listens on 0.0.0.0:47110 (see config.toml).`n`nREQUIRED DATA (not bundled - ~4 GB, specific to your client): place the CMaNGOS navmesh in a 'mmaps' folder NEXT TO $NavBinaryName (config.toml sets mmap_path = `"./mmaps`"). Generate it with CMaNGOS MoveMapGen. Without it the server starts and /health returns 200, but pathfinding returns 404 MAP_NOT_FOUND.`n`nStart it:  ./start-navserver.ps1   (Windows)"
+    }
     Set-Content -Path (Join-Path $navStage 'README.txt') -Value $navReadme -Encoding UTF8
 }
 
@@ -140,7 +145,8 @@ $pluginNames = (Get-ChildItem -Path (Join-Path $Staging 'plugins') -Directory | 
 $created = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
 if ($Kind -eq 'standalone') {
     $kindLabel = 'standalone'
-    $navJson = "{ ""bundled"": true, ""binary"": ""$NavBinaryName"", ""needs_mmaps"": true }"
+    $mmapsBundledJson = if ($script:MmapsBundled) { 'true' } else { 'false' }
+    $navJson = "{ ""bundled"": true, ""binary"": ""$NavBinaryName"", ""mmaps_bundled"": $mmapsBundledJson }"
     $notes = 'Self-hosted: bundles NavServer (needs a local mmaps navmesh) plus the Lua payload and profiles. The installer deploys NavServer and points the plugins at 127.0.0.1.'
 } else {
     $kindLabel = 'thin-client'

@@ -35,6 +35,7 @@ INCLUDE_DEBUG=1
 KEEP_STAGING=0
 NAV_BINARY=""            # when set, produce a STANDALONE distribution bundling this NavServer binary
 NAV_BINARY_NAME=""       # filename to store the binary as inside the package (default NavServer.exe)
+MMAPS_DIR=""             # optional navmesh dir to bundle into navserver/mmaps (standalone only)
 
 die() { echo "error: $*" >&2; exit 1; }
 info() { echo "[package] $*"; }
@@ -51,6 +52,7 @@ while [[ $# -gt 0 ]]; do
     --keep-staging) KEEP_STAGING=1; shift;;
     --nav-binary) NAV_BINARY="$2"; shift 2;;
     --nav-binary-name) NAV_BINARY_NAME="$2"; shift 2;;
+    --mmaps) MMAPS_DIR="$2"; shift 2;;
     -h|--help) sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0;;
     *) die "unknown option: $1";;
   esac
@@ -145,14 +147,27 @@ bin="\$dir/$NAV_BINARY_NAME"
 exec "\$bin" --config "\$dir/config.toml"
 SH
   chmod +x "$STAGING/navserver/start-navserver.sh"
+  # Bundle the navmesh if supplied (config.toml mmap_path = "./mmaps" -> navserver/mmaps).
+  MMAPS_BUNDLED="false"
+  if [[ -n "$MMAPS_DIR" ]]; then
+    [[ -d "$MMAPS_DIR" ]] || die "--mmaps '$MMAPS_DIR' does not exist"
+    info "Bundling navmesh -> navserver/mmaps (this can be several GB)"
+    mkdir -p "$STAGING/navserver/mmaps"
+    cp -r "$MMAPS_DIR/." "$STAGING/navserver/mmaps/"
+    MMAPS_BUNDLED="true"
+  fi
+  if [[ "$MMAPS_BUNDLED" == "true" ]]; then
+    MMAPS_NOTE="NAVMESH: bundled in ./mmaps (loaded automatically)."
+  else
+    MMAPS_NOTE="REQUIRED DATA (not bundled - ~4 GB, specific to your client):
+  Place the CMaNGOS navmesh in a 'mmaps' folder NEXT TO $NAV_BINARY_NAME (config.toml sets
+  mmap_path = \"./mmaps\"). Generate it with CMaNGOS MoveMapGen. Without it the server still
+  starts and /health returns 200, but pathfinding returns 404 MAP_NOT_FOUND."
+  fi
   cat > "$STAGING/navserver/README.txt" <<EOF
 SentinelNavServer (self-hosted) - listens on 0.0.0.0:47110 (see config.toml).
 
-REQUIRED DATA (not bundled - it is ~4 GB and specific to your client):
-  Place the CMaNGOS navmesh in a 'mmaps' folder NEXT TO $NAV_BINARY_NAME
-  (config.toml sets mmap_path = "./mmaps"). Generate it with CMaNGOS MoveMapGen.
-  Without it the server still starts and /health returns 200, but pathfinding
-  returns 404 MAP_NOT_FOUND.
+$MMAPS_NOTE
 
 Start it:  ./start-navserver.ps1   (Windows)   |   ./start-navserver.sh   (WSL/Linux)
 EOF
@@ -168,7 +183,7 @@ CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 PLUGIN_JSON="[$(cd "$STAGING/plugins" && ls -1 | sort | sed 's/.*/"&"/' | paste -sd, -)]"
 if [[ "$KIND" == "standalone" ]]; then
   KIND_LABEL="standalone"
-  NAV_JSON="{ \"bundled\": true, \"binary\": \"$NAV_BINARY_NAME\", \"needs_mmaps\": true }"
+  NAV_JSON="{ \"bundled\": true, \"binary\": \"$NAV_BINARY_NAME\", \"mmaps_bundled\": ${MMAPS_BUNDLED:-false} }"
   NOTES="Self-hosted: bundles NavServer (needs a local mmaps navmesh) plus the Lua payload and profiles. The installer deploys NavServer and points the plugins at 127.0.0.1."
 else
   KIND_LABEL="thin-client"
