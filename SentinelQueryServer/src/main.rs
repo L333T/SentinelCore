@@ -26,6 +26,9 @@ async fn main() {
 
     // Build the router
     let app = Router::new()
+        // Liveness probe for hosted deployments and the thin-client installer's health check.
+        // Deliberately DB-free so it answers 200 even while the world DB is being (re)provisioned.
+        .route("/health", get(health))
         .route("/quests/search", get(handlers::search_quests))
         .route("/quest/:id", get(handlers::get_quest))
         .route("/quest/:id/chain", get(handlers::get_quest_chain))
@@ -53,11 +56,40 @@ async fn main() {
         .layer(Extension(db))
         .fallback(handler_404);
 
-    // Run it
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3030));
+    // Run it.
+    //
+    // Bind address is configurable so a HOSTED QueryServer can serve remote game clients
+    // (the thin-client runtime resolves NPC spawns / item quality against it), while the
+    // default stays loopback-only for a local dev box:
+    //   * SENTINEL_QUERY_BIND — full socket address, e.g. "0.0.0.0:3030" (wins if set)
+    //   * SENTINEL_QUERY_PORT — port only, bound on 127.0.0.1 (e.g. "3030")
+    //   * neither               — 127.0.0.1:3030 (unchanged historical default)
+    let addr = resolve_bind_addr();
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     tracing::info!("listening on {}", addr);
     axum::serve(listener, app).await.unwrap();
+}
+
+/// Resolve the listen address from the environment, defaulting to the historical
+/// `127.0.0.1:3030`. `SENTINEL_QUERY_BIND` takes precedence over `SENTINEL_QUERY_PORT`.
+fn resolve_bind_addr() -> SocketAddr {
+    if let Ok(bind) = std::env::var("SENTINEL_QUERY_BIND") {
+        let trimmed = bind.trim();
+        if !trimmed.is_empty() {
+            return trimmed.parse().unwrap_or_else(|e| {
+                panic!("SENTINEL_QUERY_BIND ('{trimmed}') must be host:port, e.g. 0.0.0.0:3030: {e}")
+            });
+        }
+    }
+    let port: u16 = std::env::var("SENTINEL_QUERY_PORT")
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(3030);
+    SocketAddr::from(([127, 0, 0, 1], port))
+}
+
+async fn health() -> impl axum::response::IntoResponse {
+    (axum::http::StatusCode::OK, "ok")
 }
 
 async fn handler_404() -> impl axum::response::IntoResponse {
