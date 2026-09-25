@@ -2,6 +2,8 @@ tbcmangos.sqlite
 target
 SentinelNavServer/reference
 mmaps*
+# Thin-client release archives produced by scripts/package-release.*
+dist/
 common
 core_lua
 core_universal_kicks
