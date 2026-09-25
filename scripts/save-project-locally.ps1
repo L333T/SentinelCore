@@ -152,6 +152,10 @@ $exe = Join-Path $dir 'NavServer.exe'
 if (-not (Test-Path $exe)) { Write-Error 'NavServer.exe not found next to this script'; exit 1 }
 & $exe --config (Join-Path $dir 'config.toml')
 '@ | Set-Content -Path (Join-Path $exeDir 'start-navserver.ps1') -Encoding UTF8
+
+# Double-click launcher for Windows. Runs NavServer.exe with an absolute config path.
+$bat = "@echo off`r`ncd /d `"%~dp0`"`r`necho Starting SentinelNavServer on http://0.0.0.0:47110  (Ctrl+C to stop)`r`nNavServer.exe --config `"%~dp0config.toml`"`r`npause`r`n"
+Set-Content -Path (Join-Path $exeDir 'Start-NavServer.bat') -Value $bat -NoNewline -Encoding ascii
 @"
 SentinelNavServer (self-contained NavServer.exe) - listens on 0.0.0.0:47110 (config.toml).
 

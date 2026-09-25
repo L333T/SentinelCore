@@ -165,6 +165,10 @@ if (-not (Test-Path $exe)) { Write-Error 'NavServer.exe not found next to this s
 & $exe --config (Join-Path $dir 'config.toml')
 PS1
 
+# Double-click launcher for Windows (CRLF line endings). Runs NavServer.exe with an absolute config
+# path so it works no matter the working directory.
+printf '@echo off\r\ncd /d "%%~dp0"\r\necho Starting SentinelNavServer on http://0.0.0.0:47110  (Ctrl+C to stop)\r\nNavServer.exe --config "%%~dp0config.toml"\r\npause\r\n' > "$EXE_DIR/Start-NavServer.bat"
+
 cat > "$EXE_DIR/README.txt" <<EOF
 SentinelNavServer (self-contained NavServer.exe) - listens on 0.0.0.0:47110 (config.toml).
 
